@@ -2,6 +2,14 @@ import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 import { createWindows, editWindow } from "./segment_windows.mjs";
 import { importedSegmentPrompts } from "./segment_prompts.mjs";
+import {
+  EMPTY_PRESET_LABEL,
+  PRESET_DANGER_COLOR,
+  applyPresetDeleteColour,
+  presetAfterDelete,
+  presetDeleteRule,
+  presetNames,
+} from "./preset_choice.mjs";
 
 const TIMELINE_NODE_NAMES = new Set(["MiniMaxH3TimelinePlanner", "MiniMaxH3TimelineDirector"]);
 const STYLE_ID = "m3td-style";
@@ -25,7 +33,7 @@ const TIMELINE_EN = {
   addVideo: "＋ Video", addImage: "＋ Image", addAudio: "＋ Audio", importPreset: "Import preset", importPrompts: "Import prompts", splitAtPlayhead: "✂ Split at Playhead", deleteClip: "Delete Clip", ready: "Ready",
   presetNotConnected: "Connect a Local Preset Loader to Import Preset first", presetLoaded: "Loaded preset: {name}", presetLoadFailed: "Preset load failed: {error}",
   promptNotConnected: "Connect a Local Preset Loader to Import Segment Prompts first", promptLoaded: "Imported {count} segment prompt(s) from {name}", promptIgnoredExtra: " · ignored {count} extra preset prompt(s)", promptNothingToImport: "The preset has no segment prompts to import", promptLoadFailed: "Segment prompt import failed: {error}",
-  refreshPresets: "Refresh local presets",
+  refreshPresets: "Refresh local presets", deletePreset: "Delete current preset",
   selectionStart: "Selection start", referenceDuration: "Reference duration", zoom: "Zoom", fitAll: "Fit all", matchNearestGap: "Match nearest gap",
   materialSegments: "Material segments", updateSegments: "Update segments", secondPass: "Two-stage sampling", secondPassModel: "Upscaler", secondPassHighSteps: "High-res steps", secondPassModelMissing: "No latent upscaler found", secondPassOn: "Two-stage sampling enabled for every segment", secondPassOff: "Two-stage sampling disabled", secondPassModelChanged: "Two-stage upscaler: {model}", secondPassHighStepsChanged: "High-res sampling steps: {steps}", timelineHelp: "Drag clips/playhead · Edge snapping · Selection duration = generation duration",
   referenceVideo: "Reference video", videoAudio: "Video audio", off: "Off", on: "On", noClipSelected: "No clip selected",
@@ -249,6 +257,37 @@ function installStyles() {
       text-align:center; pointer-events:none; }
   `;
   document.head.appendChild(style);
+}
+
+// Where the frontend draws buttons in the DOM, it colours them from a class the
+// widget host writes itself, so only a rule that outranks that class changes the
+// text.  Only the label is matched: a node id is not assigned yet while the node is
+// being created, and this label belongs to this control alone.  The canvas path is
+// handled on the widget itself, where the loader builds it.
+const PRESET_DANGER_STYLE_ID = `${STYLE_ID}-preset`;
+const presetDangerRules = new Set();
+
+function addPresetDeleteRule(label) {
+  if (presetDangerRules.has(label)) return;
+  presetDangerRules.add(label);
+  let style = document.getElementById(PRESET_DANGER_STYLE_ID);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = PRESET_DANGER_STYLE_ID;
+    document.head.appendChild(style);
+  }
+  style.append(`\n${presetDeleteRule(label)}`);
+}
+
+// A node type inherits its drawing from the node base class, so an override has to
+// keep walking the prototype chain to find what it is replacing.
+function inheritedOnChain(target, name) {
+  for (let current = target; current; current = Object.getPrototypeOf(current)) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, name);
+    if (descriptor?.value !== undefined) return descriptor.value;
+    if (descriptor?.get !== undefined) return descriptor.get;
+  }
+  return undefined;
 }
 
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1720,26 +1759,71 @@ app.registerExtension({
     }
     if(nodeData.name==="MiniMaxH3PresetLoader"){
       await ensureTimelineLocale();
+      // The node draws its widgets itself, and the drawing asks each widget for the
+      // colour of its text.  Painting just before that answer is read is the only
+      // moment guaranteed to survive the frontend replacing the widget object it was
+      // built from, so the colour is re-asserted on the widget the node holds now.
+      const originalDrawWidgets=inheritedOnChain(nodeType.prototype,"drawWidgets");
+      if(originalDrawWidgets){
+        nodeType.prototype.drawWidgets=function(ctx,options){
+          this.__m3tdPaintDelete?.();
+          return originalDrawWidgets.apply(this,arguments);
+        };
+      }
       const originalCreated=nodeType.prototype.onNodeCreated;
       nodeType.prototype.onNodeCreated=function(){
         const result=originalCreated?.apply(this,arguments);
-        const label=tr("refreshPresets");
-        const button=this.addWidget?.("button",label,null,async()=>{
+        const combo=()=>this.widgets?.find(widget=>widget.name==="preset_name");
+        const writeOptions=(names,value)=>{
+          const widget=combo();
+          if(!widget)return;
+          widget.options||={};
+          widget.options.values=names;
+          widget.value=names.includes(value)?value:names[0];
+          widget.callback?.(widget.value);
+          this.setDirtyCanvas?.(true,true);
+        };
+        const refreshLabel=tr("refreshPresets");
+        const refreshButton=this.addWidget?.("button",refreshLabel,null,async()=>{
           try{
             const response=await api.fetchApi("/minimax_h3_timeline/presets/list");
             const payload=await response.json();
             if(!response.ok)throw new Error(payload?.error||`HTTP ${response.status}`);
-            const combo=this.widgets?.find(widget=>widget.name==="preset_name");
-            if(!combo)return;
-            const names=Array.isArray(payload.presets)&&payload.presets.length?payload.presets:["(no presets found)"];
-            combo.options ||= {};
-            combo.options.values=names;
-            if(!names.includes(combo.value))combo.value=names[0];
-            combo.callback?.(combo.value);
-            this.setDirtyCanvas?.(true,true);
+            const names=presetNames(payload);
+            writeOptions(names,combo()?.value);
           }catch(error){console.error("[MiniMaxH3TimelineDirector] Preset refresh failed",error);}
         });
-        if(button)button.serialize=false;
+        if(refreshButton)refreshButton.serialize=false;
+        const deleteLabel=tr("deletePreset");
+        const paintDelete=()=>{
+          const painted=this.__m3tdDeleteWidget;
+          if(painted?.text_color===PRESET_DANGER_COLOR&&this.widgets?.includes(painted))return;
+          const widget=this.widgets?.find(item=>item.name===deleteLabel);
+          if(!widget||!applyPresetDeleteColour(widget))return;
+          this.__m3tdDeleteWidget=widget;
+        };
+        this.__m3tdPaintDelete=paintDelete;
+        // The destructive variant and the label rule cover the DOM render path; the
+        // explicit label gives that rule something the rendered button always carries.
+        const deleteButton=this.addWidget?.("button",deleteLabel,null,async()=>{
+          const widget=combo();
+          const current=widget?.value;
+          if(!current||current===EMPTY_PRESET_LABEL)return;
+          const known=Array.isArray(widget.options?.values)?widget.options.values:[];
+          try{
+            const response=await api.fetchApi("/minimax_h3_timeline/presets/delete",{
+              method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({preset_name:current}),
+            });
+            const payload=await response.json();
+            if(!response.ok)throw new Error(payload?.error||`HTTP ${response.status}`);
+            const names=presetNames(payload);
+            writeOptions(names,presetAfterDelete(known,payload?.presets,current));
+          }catch(error){console.error("[MiniMaxH3TimelineDirector] Preset delete failed",error);}
+        },{variant:"destructive-textonly","aria-label":deleteLabel});
+        if(deleteButton)deleteButton.serialize=false;
+        addPresetDeleteRule(deleteLabel);
+        paintDelete();
         return result;
       };
       return;

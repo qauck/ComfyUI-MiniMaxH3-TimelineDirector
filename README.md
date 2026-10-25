@@ -139,6 +139,15 @@ first run writes all media, segment timings, and per-segment assignments back in
 can then be disconnected without losing the imported state. **Import preset** remains available for loading it
 into the UI immediately before a run.
 
+Beside **Refresh local presets**, the loader also carries **Delete current preset** — its label is painted in
+the same red the planner UI uses for its own danger buttons, so the destructive control reads differently from
+the refresh control above it. It removes the selected preset folder from `ComfyUI/output/MiniMaxH3_Presets/`
+and reloads the list: the preset that followed the
+removed one becomes selected, the previous preset is selected when the removed entry was last, and an emptied
+preset directory leaves only the `(no presets found)` marker in the combo. Media a complete preset already
+materialized under `ComfyUI/input/minimax_h3_timeline_director/presets/` belongs to the planner, not to the
+preset folder, so removing the preset does not touch it.
+
 To reuse only the wording of a saved plan, connect the same loader to **Import Segment Prompts** and press
 **Import prompts**. That path copies each segment's prompt and nothing else: the current canvas, generation
 duration, uploaded media, per-segment assignments, and every segment window stay exactly as they are. A preset

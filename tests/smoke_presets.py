@@ -138,6 +138,44 @@ def main() -> None:
             assert sockets["import_segment_prompts"].display_name == "Import Segment Prompts"
             assert sockets["import_segment_prompts"].tooltip
 
+            # Delete current preset: the folder itself goes away, the other preset
+            # stays selectable, and the media already materialized for the planner is
+            # not part of the preset folder, so it survives.
+            complete_name = Path(complete_folder).name
+            config_name = Path(config_folder).name
+            assert set(preset._preset_names()) == {complete_name, config_name}
+            assert preset._delete_preset(complete_name) == complete_name
+            assert not Path(complete_folder).exists()
+            assert preset._preset_names() == [config_name]
+            assert (upload / "presets" / complete_name / "videos" / "clip.mp4").read_bytes() == b"video"
+
+            try:
+                preset._delete_preset(complete_name)
+            except FileNotFoundError as error:
+                assert "not found" in str(error).lower()
+            else:
+                raise AssertionError("Deleting an already removed preset must fail")
+            try:
+                preset._delete_preset("..")
+            except ValueError as error:
+                assert "outside the local preset directory" in str(error)
+            else:
+                raise AssertionError("Deleting outside the preset directory must fail")
+            assert ".." not in preset._preset_names() and Path(config_folder).is_dir()
+
+            # With nothing left on disk the combo falls back to the empty marker the
+            # loader shows, and running that marker is refused instead of guessing.
+            preset._delete_preset(config_name)
+            assert preset._preset_names() == []
+            loader_inputs = {spec.id: spec for spec in preset.MiniMaxH3PresetLoader.define_schema().inputs}
+            assert loader_inputs["preset_name"].options == [preset.EMPTY_PRESET]
+            try:
+                preset.MiniMaxH3PresetLoader.execute(preset.EMPTY_PRESET)
+            except ValueError as error:
+                assert "No local MiniMax H3 presets" in str(error)
+            else:
+                raise AssertionError("Loading the empty marker must fail")
+
     print("preset smoke test: PASS")
 
 

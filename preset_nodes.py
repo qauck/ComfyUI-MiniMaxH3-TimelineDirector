@@ -82,6 +82,13 @@ def _read_preset(name: str) -> tuple[Path, dict[str, Any]]:
     return directory, data
 
 
+def _delete_preset(name: str) -> str:
+    """Remove one local preset folder. The path rules are the loader's rules."""
+    directory = _preset_directory(str(name or ""))
+    shutil.rmtree(directory)
+    return directory.name
+
+
 def _source_plan(material_plan: Any = None, segment_plan: Any = None) -> dict[str, Any]:
     value = segment_plan if segment_plan is not None else material_plan
     if value is None:
@@ -313,5 +320,25 @@ async def load_preset(request: web.Request) -> web.Response:
         return web.json_response(_preset_payload(str(payload.get("preset_name") or "")))
     except FileNotFoundError as exc:
         return web.json_response({"error": str(exc)}, status=404)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+@PromptServer.instance.routes.post("/minimax_h3_timeline/presets/delete")
+async def delete_preset(request: web.Request) -> web.Response:
+    """Delete the selected preset folder and answer with what remains."""
+    try:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object")
+        name = str(payload.get("preset_name") or "")
+        if name == EMPTY_PRESET:
+            raise ValueError("There is no local preset selected to delete")
+        removed = _delete_preset(name)
+        return web.json_response({"deleted": removed, "presets": _preset_names()})
+    except FileNotFoundError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    except OSError as exc:
+        return web.json_response({"error": f"Unable to delete the preset folder: {exc}"}, status=500)
     except (ValueError, json.JSONDecodeError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
