@@ -1,6 +1,7 @@
 import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 import { createWindows, editWindow } from "./segment_windows.mjs";
+import { importedSegmentPrompts } from "./segment_prompts.mjs";
 
 const TIMELINE_NODE_NAMES = new Set(["MiniMaxH3TimelinePlanner", "MiniMaxH3TimelineDirector"]);
 const STYLE_ID = "m3td-style";
@@ -21,8 +22,9 @@ const TIMELINE_EN = {
   segmentTimelineHelp: "H3 frame snapping · Moving/resizing ripples later windows · No gaps",
   segmentTabs: "Segment windows and prompts", segmentPlanHint: "Connect Segment Plan directly to Finite Segment Sampler",
   brandPlanner: "MiniMax H3 Material Planner", brandDirector: "MiniMax H3 Timeline Director (Compatibility)",
-  addVideo: "＋ Video", addImage: "＋ Image", addAudio: "＋ Audio", importPreset: "Import preset", splitAtPlayhead: "✂ Split at Playhead", deleteClip: "Delete Clip", ready: "Ready",
+  addVideo: "＋ Video", addImage: "＋ Image", addAudio: "＋ Audio", importPreset: "Import preset", importPrompts: "Import prompts", splitAtPlayhead: "✂ Split at Playhead", deleteClip: "Delete Clip", ready: "Ready",
   presetNotConnected: "Connect a Local Preset Loader to Import Preset first", presetLoaded: "Loaded preset: {name}", presetLoadFailed: "Preset load failed: {error}",
+  promptNotConnected: "Connect a Local Preset Loader to Import Segment Prompts first", promptLoaded: "Imported {count} segment prompt(s) from {name}", promptIgnoredExtra: " · ignored {count} extra preset prompt(s)", promptNothingToImport: "The preset has no segment prompts to import", promptLoadFailed: "Segment prompt import failed: {error}",
   refreshPresets: "Refresh local presets",
   selectionStart: "Selection start", referenceDuration: "Reference duration", zoom: "Zoom", fitAll: "Fit all", matchNearestGap: "Match nearest gap",
   materialSegments: "Material segments", updateSegments: "Update segments", secondPass: "Two-stage sampling", secondPassModel: "Upscaler", secondPassHighSteps: "High-res steps", secondPassModelMissing: "No latent upscaler found", secondPassOn: "Two-stage sampling enabled for every segment", secondPassOff: "Two-stage sampling disabled", secondPassModelChanged: "Two-stage upscaler: {model}", secondPassHighStepsChanged: "High-res sampling steps: {steps}", timelineHelp: "Drag clips/playhead · Edge snapping · Selection duration = generation duration",
@@ -576,7 +578,7 @@ class TimelineDirectorUI {
         <button class="m3td-btn" data-action="video">${esc(tr("addVideo"))}</button>
         <button class="m3td-btn" data-action="image">${esc(tr("addImage"))}</button>
         <button class="m3td-btn" data-action="audio">${esc(tr("addAudio"))}</button>
-        ${this.isPlanner?`<button class="m3td-btn" data-action="importPreset">${esc(tr("importPreset"))}</button>`:""}
+        ${this.isPlanner?`<button class="m3td-btn" data-action="importPreset">${esc(tr("importPreset"))}</button><button class="m3td-btn" data-action="importPrompts">${esc(tr("importPrompts"))}</button>`:""}
         <button class="m3td-btn" data-action="split">${esc(tr("splitAtPlayhead"))}</button>
         <button class="m3td-btn danger" data-action="delete">${esc(tr("deleteClip"))}</button>
         <span class="m3td-spacer"></span><span class="m3td-status">${esc(tr("ready"))}</span>
@@ -645,6 +647,8 @@ class TimelineDirectorUI {
     this.root.querySelector('[data-action="audio"]').onclick = () => this.root.querySelector('[data-upload="audio"]').click();
     const importPresetButton=this.root.querySelector('[data-action="importPreset"]');
     if(importPresetButton)importPresetButton.onclick=()=>this.importConnectedPreset();
+    const importPromptsButton=this.root.querySelector('[data-action="importPrompts"]');
+    if(importPromptsButton)importPromptsButton.onclick=()=>this.importConnectedSegmentPrompts();
     this.root.querySelector('[data-action="split"]').onclick = () => this.splitSelected();
     this.root.querySelector('[data-action="delete"]').onclick = () => this.deleteSelected();
     this.root.querySelector('[data-action="fit"]').onclick = () => this.fitTimeline();
@@ -1527,8 +1531,8 @@ class TimelineDirectorUI {
 
   setStatus(message, progress=null) { this.status.textContent=message; if(progress!=null)this.progress.style.width=`${clamp(progress,0,1)*100}%`; }
 
-  connectedPresetName() {
-    const input=this.node.inputs?.find(item=>item.name==="import_preset");
+  connectedPresetName(inputName = "import_preset") {
+    const input=this.node.inputs?.find(item=>item.name===inputName);
     if(input?.link==null)return "";
     const links=this.node.graph?.links;
     const link=links?.get?.(input.link) ?? links?.[input.link];
@@ -1538,23 +1542,56 @@ class TimelineDirectorUI {
     return String(origin.widgets?.find(widget=>widget.name==="preset_name")?.value||"");
   }
 
+  async loadConnectedPreset(inputName) {
+    const presetName=this.connectedPresetName(inputName);
+    if(!presetName||presetName==="(no presets found)")return null;
+    const response=await api.fetchApi("/minimax_h3_timeline/presets/load",{
+      method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({preset_name:presetName}),
+    });
+    const payload=await response.json();
+    if(!response.ok)throw new Error(payload?.error||`HTTP ${response.status}`);
+    return payload;
+  }
+
   async importConnectedPreset() {
-    const presetName=this.connectedPresetName();
-    if(!presetName||presetName==="(no presets found)"){
-      this.setStatus(tr("presetNotConnected"));
-      return;
-    }
     try{
-      const response=await api.fetchApi("/minimax_h3_timeline/presets/load",{
-        method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({preset_name:presetName}),
-      });
-      const payload=await response.json();
-      if(!response.ok)throw new Error(payload?.error||`HTTP ${response.status}`);
+      const payload=await this.loadConnectedPreset("import_preset");
+      if(!payload){this.setStatus(tr("presetNotConnected"));return;}
       this.applyPresetPayload(payload);
     }catch(error){
       console.error("[MiniMaxH3TimelineDirector] Preset import failed",error);
       this.setStatus(tr("presetLoadFailed",{error:error.message}));
     }
+  }
+
+  async importConnectedSegmentPrompts() {
+    try{
+      const payload=await this.loadConnectedPreset("import_segment_prompts");
+      if(!payload){this.setStatus(tr("promptNotConnected"));return;}
+      this.applyPresetSegmentPrompts(payload);
+    }catch(error){
+      console.error("[MiniMaxH3TimelineDirector] Segment prompt import failed",error);
+      this.setStatus(tr("promptLoadFailed",{error:error.message}));
+    }
+  }
+
+  // "Import prompts" is the one preset import that keeps everything else.  The
+  // shared helper decides which prompt slots a preset offers and how they line
+  // up with the planner's own segments; this method only writes them back.
+  applyPresetSegmentPrompts(payload) {
+    const timeline=payload?.timeline;
+    if(!timeline||typeof timeline!=="object")throw new Error("Preset timeline is missing");
+    const segments=this.state.segmentConfig?.segments||[];
+    const {applied,ignored,prompts}=importedSegmentPrompts(segments,timeline.segmentConfig);
+    if(!applied){this.setStatus(tr("promptNothingToImport"));return;}
+    for(let index=0;index<applied;index++)segments[index].prompt=prompts[index];
+    this.activeSegment=clamp(this.activeSegment||0,0,segments.length-1);
+    this.sync(false);
+    this.render();
+    this.setStatus(
+      tr("promptLoaded",{count:applied,name:payload.name||"preset"})
+      + (ignored>0?tr("promptIgnoredExtra",{count:ignored}):"")
+    );
   }
 
   applyPresetPayload(payload) {

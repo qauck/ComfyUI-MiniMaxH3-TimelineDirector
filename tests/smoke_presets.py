@@ -84,6 +84,60 @@ def main() -> None:
             assert events[0][1]["node_id"] == "42"
             assert events[0][1]["timeline"]["segmentConfig"]["count"] == 1
 
+            # Import Segment Prompts serves the Import prompts button only: the
+            # prompt slots it exposes are clamped to the preset's own segment
+            # entries, and the plan a queue run produces is unchanged.
+            slots = director._imported_segment_prompts(loaded)
+            assert [segment["prompt"] for segment in slots] == ["One"]
+            three_segment_prompt_preset = {**loaded, "timeline": {
+                **loaded["timeline"],
+                "segmentConfig": {"mode": "timeline", "count": 3, "activeIndex": 0, "segments": [
+                    {"startFrame": 0, "endFrame": 120, "prompt": "First", "images": [], "audios": []},
+                    {"startFrame": 120, "endFrame": 240, "prompt": "", "images": [], "audios": []},
+                    {"startFrame": 240, "endFrame": 360, "prompt": "Third", "images": [], "audios": []},
+                    {"startFrame": 360, "endFrame": 480, "prompt": "Unused", "images": [], "audios": []},
+                ]},
+            }}
+            assert [segment["prompt"] for segment in director._imported_segment_prompts(three_segment_prompt_preset)] == ["First", "", "Third"]
+            local_timeline = json.dumps({
+                "version": 10, "selection": {"start": 0.0, "duration": 5.0},
+                "segmentConfig": {"mode": "timeline", "count": 2, "activeIndex": 0, "segments": [
+                    {"startFrame": 0, "endFrame": 120, "prompt": "Local one", "images": [], "audios": []},
+                    {"startFrame": 120, "endFrame": 240, "prompt": "Local two", "images": [], "audios": []},
+                ]},
+            })
+            prompted, _, prompted_complete = director.MiniMaxH3TimelinePlanner.execute(
+                1344, 768, 9.0, local_timeline,
+                import_segment_prompts=three_segment_prompt_preset, unique_id="43",
+            )
+            prompts = [segment["prompt"] for segment in prompted["timeline"]["segmentConfig"]["segments"]]
+            assert prompts == ["Local one", "Local two"]
+            # Nothing else moves: this node keeps its own 1344x768 canvas, its
+            # own 9.0-second duration, and its own window timings, instead of the
+            # preset's 640x352 canvas and its different windows, and the prompts
+            # the node already had are still the ones the plan carries.
+            assert (prompted["width"], prompted["height"]) == (1344, 768)
+            assert prompted["generation_seconds"] == 5.0
+            assert [
+                (segment["startFrame"], segment["endFrame"])
+                for segment in prompted["timeline"]["segmentConfig"]["segments"]
+            ] == [(0, 120), (120, 240)]
+            assert prompted_complete["generation_seconds"] == 9.0
+            assert prompted_complete["timeline"]["segmentConfig"]["count"] == 2
+            try:
+                director.MiniMaxH3TimelinePlanner.execute(
+                    1344, 768, 9.0, local_timeline, import_segment_prompts={"type": "other"}
+                )
+            except ValueError as error:
+                assert "MiniMax H3 Local Preset Loader" in str(error)
+            else:
+                raise AssertionError("A non-preset Import Segment Prompts link must fail")
+            sockets = {spec.id: spec for spec in director.MiniMaxH3TimelinePlanner.define_schema().inputs}
+            assert "import_segment_prompts" in sockets
+            assert sockets["import_segment_prompts"].optional
+            assert sockets["import_segment_prompts"].display_name == "Import Segment Prompts"
+            assert sockets["import_segment_prompts"].tooltip
+
     print("preset smoke test: PASS")
 
 

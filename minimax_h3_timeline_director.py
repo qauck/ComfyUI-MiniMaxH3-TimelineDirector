@@ -1622,6 +1622,30 @@ def _encode_timeline_plan(
     return conditioning, latent, video_audio_output, standalone_audio_output
 
 
+def _imported_segment_prompts(preset: Any) -> list[Any]:
+    """Return the prompt slots a preset carries, in segment order.
+
+    The Import prompts path reads nothing else: canvas, generation duration,
+    media, assignments, and segment windows all stay whatever the planner has
+    now.  Every preset segment entry is a slot, even one whose prompt is empty,
+    so an empty slot is an explicit value rather than a missing one.
+    """
+
+    if not isinstance(preset, dict) or preset.get("type") != "MINIMAX_H3_TIMELINE_PRESET":
+        raise ValueError("Import Segment Prompts must come from MiniMax H3 Local Preset Loader")
+    timeline = preset.get("timeline")
+    if not isinstance(timeline, dict):
+        raise ValueError("The imported preset is missing timeline configuration")
+    config = timeline.get("segmentConfig")
+    if not isinstance(config, dict):
+        return []
+    segments = config.get("segments")
+    if not isinstance(segments, list):
+        return []
+    declared = int(_float(config.get("count"), 0))
+    return segments[:min(declared or len(segments), len(segments))]
+
+
 class MiniMaxH3TimelinePlanner(io.ComfyNode):
     """Editable material/guide plan which deliberately performs no H3 encode."""
 
@@ -1632,13 +1656,22 @@ class MiniMaxH3TimelinePlanner(io.ComfyNode):
             display_name="MiniMax H3 Material Planner",
             description=(
                 "Edit a timeline and output a lightweight material plan. The plan may feed a prompt "
-                "rewriter before the rewritten prompt and same plan enter the H3 Plan Encoder, avoiding cycles."
+                "rewriter before the rewritten prompt and same plan enter the H3 Plan Encoder, avoiding cycles. "
+                "Import Segment Prompts serves the Import prompts button and changes nothing at queue time."
             ),
             category="model/conditioning/minimax",
             inputs=[
                 PresetData.Input(
                     "import_preset", display_name="Import Preset", optional=True,
                     tooltip="Optional local preset loaded by MiniMax H3 Local Preset Loader.",
+                ),
+                PresetData.Input(
+                    "import_segment_prompts", display_name="Import Segment Prompts", optional=True,
+                    tooltip=(
+                        "Optional MiniMax H3 Local Preset Loader output. The Import prompts button reads only "
+                        "each segment's prompt from it; canvas, duration, media, and segment windows are left "
+                        "untouched, and preset segments beyond the planner's own count are ignored."
+                    ),
                 ),
                 io.Int.Input(
                     "prompt_index", display_name="Prompt Index", optional=True,
@@ -1666,11 +1699,22 @@ class MiniMaxH3TimelinePlanner(io.ComfyNode):
     @classmethod
     def execute(
         cls, width, height, generation_seconds, timeline_data="", import_preset=None,
-        prompt_index=None, unique_id=None,
+        import_segment_prompts=None, prompt_index=None, unique_id=None,
     ) -> io.NodeOutput:
         source_timeline_data = timeline_data
         source_width, source_height = width, height
         source_seconds = generation_seconds
+        if import_segment_prompts is not None:
+            # This socket exists for the Import prompts button.  The browser reads
+            # whichever loader is connected to it and writes only the segment
+            # prompts into the planner UI, so sampling keeps using the prompt set
+            # the planner itself holds.  Connecting it is still validated here so
+            # a wrong link reports the actual mistake instead of doing nothing.
+            if not _imported_segment_prompts(import_segment_prompts):
+                log.warning(
+                    "Import Segment Prompts points at a preset without segment prompts; "
+                    "the Import prompts button has nothing to read."
+                )
         if import_preset is not None:
             if not isinstance(import_preset, dict) or import_preset.get("type") != "MINIMAX_H3_TIMELINE_PRESET":
                 raise ValueError("Import Preset must come from MiniMax H3 Local Preset Loader")

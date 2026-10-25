@@ -270,7 +270,7 @@ class MiniMaxH3FiniteSegmentVideoSampler(io.ComfyNode):
     def define_schema(cls):
         return io.Schema(
             node_id="MiniMaxH3FiniteSegmentVideoSampler",
-            display_name="MiniMax H3 有限分段采样(低内存版本)",
+            display_name="MiniMax H3 Low-Memory Segment Video Sampler",
             category="MiniMax H3/Long Video",
             description=(
                 "Decode and encode one segment at a time in ComfyUI's temporary folder, then join the encoded "

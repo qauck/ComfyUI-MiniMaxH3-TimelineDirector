@@ -84,7 +84,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3TimelineSelfLiftSampler": "MiniMax H3 Two-Stage Sampler",
     "MiniMaxH3PresetLoader": "MiniMax H3 Local Preset Loader",
     "MiniMaxH3PresetExporter": "MiniMax H3 Preset Export",
-    "MiniMaxH3FiniteSegmentVideoSampler": "MiniMax H3 有限分段采样(低内存版本)",
+    "MiniMaxH3FiniteSegmentVideoSampler": "MiniMax H3 Low-Memory Segment Video Sampler",
     "MiniMaxH3SegmentVideoInitialize": "MiniMax H3 Initialize Temporary Segment Video",
     "MiniMaxH3SegmentVideoArchive": "MiniMax H3 Archive Temporary Segment Video",
     "MiniMaxH3SegmentVideoOutput": "MiniMax H3 Finish Temporary Segment Video",

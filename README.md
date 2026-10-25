@@ -117,7 +117,7 @@ An editable reference-media timeline for ComfyUI's native **MiniMax H3 Reference
 | **MiniMax H3 Low-Memory Segment Video Sampler** | Decodes and encodes one segment at a time in ComfyUI's temporary folder, then joins encoded segments as `VIDEO`; no latent checkpoints or rerun state. |
 | **MiniMax H3 native-loop node set** | Splits segment selection, continuation preparation, sampling, and assembly for free composition inside ComfyUI `Start Loop / End Loop`. |
 | **MiniMax H3 Preset Export** | Connects to Material Plan or Segment Plan and saves configuration-only or complete media-bearing preset folders. |
-| **MiniMax H3 Local Preset Loader** | Finds local presets and feeds the Material Planner's new Import Preset input. |
+| **MiniMax H3 Local Preset Loader** | Finds local presets and feeds the Material Planner's Import Preset or Import Segment Prompts input. |
 | **MiniMax H3 Timeline Director (Compatibility)** | Preserves the original all-in-one workflow and older saved workflows. |
 
 Long-video generation needs only **Material Planner Segment Plan → Finite Segment Sampling**. The Plan Encoder is also public now so native Loop workflows can place it explicitly inside the loop body.
@@ -138,6 +138,13 @@ installation, refresh Local Preset Loader, and connect it to Material Planner's 
 first run writes all media, segment timings, and per-segment assignments back into the planner UI. The loader
 can then be disconnected without losing the imported state. **Import preset** remains available for loading it
 into the UI immediately before a run.
+
+To reuse only the wording of a saved plan, connect the same loader to **Import Segment Prompts** and press
+**Import prompts**. That path copies each segment's prompt and nothing else: the current canvas, generation
+duration, uploaded media, per-segment assignments, and every segment window stay exactly as they are. A preset
+with more segments than the planner ignores its extra prompts, a preset with fewer leaves the remaining prompts
+untouched, and a prompt the preset stores as empty clears that segment on purpose. The socket itself changes
+nothing at queue time — sampling always uses the prompt set the planner currently holds.
 
 Presets intentionally omit workflows, model/LoRA selections, plugin versions, and ComfyUI versions. A complete
 preset materializes media into the fixed `ComfyUI/input/minimax_h3_timeline_director/presets/` subtree while
